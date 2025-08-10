@@ -1,35 +1,35 @@
 import pandas as pd
 import numpy as np
-import io
+from pathlib import Path
 from io import BytesIO
+from typing import List
 from streamlit.runtime.uploaded_file_manager import UploadedFile
+from tabulate import tabulate
 
-# Read input data
-# wages_sheet = pd.read_excel("resources/PAYMENT SHEET SCL JUNE 2025.xlsx", sheet_name="WAGES", parse_dates=["birth_date"])
-# ncp_days = pd.read_excel("resources/PAYMENT SHEET SCL JUNE 2025.xlsx", sheet_name="PAYMENT", header=1, usecols=["NCP DAYS","uan_no"])
+from utils.save_output import save_esi_excel
+from .verification import verify_pf, verify_esi
 
-# ===== Save function =====
-def save_with_custom_sep(df, sep="#~#", header=False):
-    buf = io.StringIO()
-    if header:
-        buf.write(sep.join(df.columns) + "\n")
-    rows = [sep.join(map(str, row)) for row in df.itertuples(index=False, name=None)]
-    buf.write("\n".join(rows))
-    return buf.getvalue()
+def calculate_pf(payroll_file: UploadedFile, active_pf_file: UploadedFile) -> List[pd.DataFrame]:
+    wages_sheet = pd.read_excel(payroll_file, sheet_name="WAGES", parse_dates=["birth_date"])
+    
+    payments_sheet = pd.read_excel(payroll_file, sheet_name="PAYMENT", header=1, usecols=["NCP DAYS","uan_no"])
+    payments_sheet = payments_sheet.rename(columns={"uan_no": "UAN"})
 
-
-def calculate_pf(excel_file: UploadedFile) -> pd.DataFrame:
-    wages_sheet = pd.read_excel(excel_file, sheet_name="WAGES", parse_dates=["birth_date"])
-    payments_sheet = pd.read_excel(excel_file, sheet_name="PAYMENT", header=1, usecols=["NCP DAYS","uan_no"])
+    active_pf = pd.read_csv(active_pf_file, usecols=["UAN", "Name", "Father's/Husband's Name"])
+    active_pf = active_pf.astype(str)
 
     # clean up input data
-    wages_sheet.dropna(inplace=True, subset=["uan_no"])
-    payments_sheet.dropna(inplace=True, subset=["uan_no"])
-
-    # Check if counts match
-    if len(wages_sheet) != len(payments_sheet):
-        raise ValueError(f"Row count mismatch: WAGES has {len(wages_sheet)}, PAYMENT has {len(payments_sheet)}")
-
+    missing_uan_wages = wages_sheet[wages_sheet["uan_no"].isna()]
+    missing_uan_wages.index = missing_uan_wages.index + 2
+    if not missing_uan_wages.empty:
+        display_cols = ["code", "naam"]
+        table = tabulate(
+            missing_uan_wages[display_cols], 
+            headers=display_cols, 
+            tablefmt='rounded_grid',
+        )
+        raise ValueError(f"Missing UAN in WAGES sheet for the following rows:\n{table}")
+    
     # constants
     EPF_RATE = 0.12
     EPS_RATE = 0.0833
@@ -37,12 +37,16 @@ def calculate_pf(excel_file: UploadedFile) -> pd.DataFrame:
     RETIREMENT_AGE = 58
 
     # age calculation
-    today = pd.Timestamp.today() - pd.DateOffset(months=1)
+    processing_month = pd.Timestamp.today() - pd.DateOffset(months=1)  # July
+    cutoff_date = processing_month.replace(day=1) - pd.DateOffset(days=1)  # Last day of June
+
     ages = (
-        today.year - wages_sheet["birth_date"].dt.year
-        - ((today.month < wages_sheet["birth_date"].dt.month) |
-        ((today.month == wages_sheet["birth_date"].dt.month) &
-            (today.day < wages_sheet["birth_date"].dt.day)))
+        cutoff_date.year - wages_sheet["birth_date"].dt.year
+        - (
+            (cutoff_date.month < wages_sheet["birth_date"].dt.month) |
+            ((cutoff_date.month == wages_sheet["birth_date"].dt.month) &
+            (cutoff_date.day < wages_sheet["birth_date"].dt.day))
+        )
     )
 
     # Wage calculations
@@ -64,34 +68,52 @@ def calculate_pf(excel_file: UploadedFile) -> pd.DataFrame:
         "EPF_CONTRI_REMITTED": epf_contri_remitted,
         "EPS_CONTRI_REMITTED": eps_contri_remitted,
         "EPF_EPS_DIFF_REMITTED": epf_epf_diff_remitted,
-        "NCP_DAYS": payments_sheet["NCP DAYS"],
-        "REFUND_OF_ADVANCES": 0
+        # "NCP_DAYS": payments_sheet["NCP DAYS"],
+        # "REFUND_OF_ADVANCES": 0
     })
+    out_df = out_df.merge(
+        payments_sheet[["UAN", "NCP DAYS"]],
+        on="UAN",
+        how="left"  # keep only out_df rows
+    )
+    out_df["REFUND_OF_ADVANCES"] = 0
+
     for col in out_df.columns:
         if col in ["UAN", "MEMBER_NAME"]:
             out_df[col] = out_df[col].astype(str)
         else:
-            out_df[col] = out_df[col].astype(int)
-    return out_df
+            out_df[col] = out_df[col].astype("Int64")
+    
+    payroll_df = out_df[["UAN", "MEMBER_NAME"]].copy()
+    payroll_df["father"] = wages_sheet["father"]
+    verify_df = verify_pf(payroll_df, active_pf)
+    return [verify_df, out_df]
 
+def calculate_esi(payroll_file: UploadedFile, active_esi_file: UploadedFile) -> List[pd.DataFrame]:
+    wages_sheet = pd.read_excel(payroll_file, sheet_name="WAGES")
 
+    if Path(active_esi_file.name).suffix == ".xls":
+        active_esi_df = pd.read_html(active_esi_file)
+        if isinstance(active_esi_df, list):
+            active_esi_df = active_esi_df[0]
+    else:
+        active_esi_df = pd.read_excel(active_esi_file)
 
-def save_esi_excel(df: pd.DataFrame) -> BytesIO:
-    instructions_df = pd.read_excel("resources/MC_Template_scl_june_2025.xlsx", sheet_name="Instructions & Reason Codes")
+    active_esi_df = active_esi_df.astype(str)
 
-    # Write to in-memory Excel file with two sheets
-    output = BytesIO()
-    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-        df.to_excel(writer, index=False, sheet_name='ESI Report')
-        instructions_df.to_excel(writer, index=False, sheet_name='Instructions & Reason Codes')
-    output.seek(0)
-    return output
-
-def calculate_esi(excel_file: UploadedFile) -> BytesIO:
-    wages_sheet = pd.read_excel(excel_file, sheet_name="WAGES")
 
     # clean up input data
-    wages_sheet.dropna(inplace=True, subset=["esi_no"])
+    missing_esi_wages = wages_sheet[wages_sheet["esi_no"].isna()]
+    missing_esi_wages.index = missing_esi_wages.index + 2
+    if not missing_esi_wages.empty:
+        display_cols = ["code", "naam"]
+        table = tabulate(
+            missing_esi_wages[display_cols], 
+            headers=display_cols, 
+            tablefmt='rounded_grid',
+        )
+        raise ValueError(f"Missing ESI number in WAGES sheet for the following rows:\n{table}")
+    
     days = wages_sheet["days"].copy()
     
     # Find fractional day rows
@@ -118,6 +140,6 @@ def calculate_esi(excel_file: UploadedFile) -> BytesIO:
     })
     out_df = out_df.astype(str).astype(str)
 
-    output_excel = save_esi_excel(out_df)
+    verify_esi_df = verify_esi(out_df, active_esi_df)
 
-    return output_excel
+    return [verify_esi_df, out_df]
