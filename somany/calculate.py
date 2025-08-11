@@ -127,7 +127,7 @@ def calculate_esi(payroll_file: UploadedFile, active_esi_file: UploadedFile) -> 
         days.loc[frac_indices[:half]] = np.ceil(days.loc[frac_indices[:half]])
         days.loc[frac_indices[half:]] = np.floor(days.loc[frac_indices[half:]])
     
-    total_wages = wages_sheet["tot_earn"] + wages_sheet["ot_amtord"] + wages_sheet["earn_npf"]
+    total_wages = wages_sheet["tot_earn"] + wages_sheet["ot_amtord"]
 
     # Output DataFrame
     out_df = pd.DataFrame({
