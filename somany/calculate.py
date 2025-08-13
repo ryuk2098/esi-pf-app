@@ -10,12 +10,21 @@ from utils.save_output import save_esi_excel
 from .verification import verify_pf, verify_esi
 
 def calculate_pf(payroll_file: UploadedFile, active_pf_file: UploadedFile) -> List[pd.DataFrame]:
-    wages_sheet = pd.read_excel(payroll_file, sheet_name="WAGES", parse_dates=["birth_date"])
+    wages_sheet = pd.read_excel(payroll_file, sheet_name="WAGES")
+    wages_sheet.drop("birth_date", axis=1, inplace=True)
     
     payments_sheet = pd.read_excel(payroll_file, sheet_name="PAYMENT", header=1, usecols=["NCP DAYS","uan_no"])
     payments_sheet = payments_sheet.rename(columns={"uan_no": "UAN"})
 
-    active_pf = pd.read_csv(active_pf_file, usecols=["UAN", "Name", "Father's/Husband's Name"])
+    active_pf: pd.DataFrame = pd.read_csv(active_pf_file, usecols=["UAN", "Name", "Father's/Husband's Name", "DoB"])
+
+    wages_sheet = wages_sheet.merge(
+        active_pf[["UAN", "DoB"]],
+        left_on="uan_no",
+        right_on="UAN",
+        how="left"
+    )
+    wages_sheet["DoB"] = wages_sheet["DoB"].astype("datetime64[ns]")
     active_pf = active_pf.astype(str)
 
     # clean up input data
@@ -41,11 +50,11 @@ def calculate_pf(payroll_file: UploadedFile, active_pf_file: UploadedFile) -> Li
     cutoff_date = processing_month.replace(day=1) - pd.DateOffset(days=1)  # Last day of June
 
     ages = (
-        cutoff_date.year - wages_sheet["birth_date"].dt.year
+        cutoff_date.year - wages_sheet["DoB"].dt.year
         - (
-            (cutoff_date.month < wages_sheet["birth_date"].dt.month) |
-            ((cutoff_date.month == wages_sheet["birth_date"].dt.month) &
-            (cutoff_date.day < wages_sheet["birth_date"].dt.day))
+            (cutoff_date.month < wages_sheet["DoB"].dt.month) |
+            ((cutoff_date.month == wages_sheet["DoB"].dt.month) &
+            (cutoff_date.day < wages_sheet["DoB"].dt.day))
         )
     )
 
