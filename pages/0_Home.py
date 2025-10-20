@@ -10,7 +10,7 @@ initialize_session_state()
 
 # --- Applied Color Theme ---
 st.title(":green[Welcome to the Payroll & Banking Suite]")
-st.markdown("Welcome! Use the navigation sidebar on the left or the launch buttons below to access different tools.")
+st.markdown("Welcome! Use the navigation bar on the top or the launch buttons below to access different tools.")
 
 st.header(":blue[Available Tools]", divider="grey")
 
