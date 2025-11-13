@@ -38,7 +38,7 @@ def calculate_pf(payroll_file: UploadedFile, active_pf_file: UploadedFile) -> Li
     # constants
     EPF_RATE = 0.12
     EPS_RATE = 0.0833
-    RETIREMENT_AGE = 60
+    RETIREMENT_AGE = 58
 
     # age calculation
     processing_month = pd.Timestamp.today() - pd.DateOffset(months=1)  # July

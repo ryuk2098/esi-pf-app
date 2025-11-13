@@ -250,7 +250,7 @@ if ready:
                 st.dataframe(totals_df, width='stretch', hide_index=True)
 
             if "EPS_WAGES" in pf_df.columns and (pf_df["EPS_WAGES"] == 0).any():
-                st.subheader(f":grey[Employees with Age >= 60]", divider="grey", width="content")
+                st.subheader(f":grey[Employees with Age >= 58]", divider="grey", width="content")
                 age_df = pf_df[pf_df["EPS_WAGES"] == 0].copy()
                 age_df.index = age_df.index + 2
                 st.dataframe(age_df, width='stretch')
